@@ -1,0 +1,46 @@
+# Project: median-select
+# Makefile created by Dev-C++ 5.11
+
+CPP      = g++.exe
+CC       = gcc.exe
+WINDRES  = windres.exe
+OBJ      = hr_timer.o ya-sort.o ya-median.o ya-select.o ya-sort2.o heapsort.o qsort.o
+LINKOBJ  = hr_timer.o ya-sort.o ya-median.o ya-select.o ya-sort2.o heapsort.o qsort.o
+LIBS     = -L"C:/TDM-GCC-64/lib" -L"C:/TDM-GCC-64/x86_64-w64-mingw32/lib" -static-libgcc -flto -m64
+INCS     = -I"C:/TDM-GCC-64/include" -I"C:/TDM-GCC-64/x86_64-w64-mingw32/include" -I"C:/TDM-GCC-64/lib/gcc/x86_64-w64-mingw32/10.3.0/include"
+CXXINCS  = -I"C:/TDM-GCC-64/include" -I"C:/TDM-GCC-64/x86_64-w64-mingw32/include" -I"C:/TDM-GCC-64/lib/gcc/x86_64-w64-mingw32/10.3.0/include" -I"C:/TDM-GCC-64/lib/gcc/x86_64-w64-mingw32/10.3.0/include/c++"
+BIN      = median-select.exe
+CXXFLAGS = $(CXXINCS) -march=native -Ofast -m64 -std=c99 -Wall -Wextra
+CFLAGS   = $(INCS) -march=native -Ofast -m64 -std=c99 -Wall -Wextra -flto
+RM       = rm.exe -f
+
+.PHONY: all all-before all-after clean clean-custom
+
+all: all-before $(BIN) all-after
+
+clean: clean-custom
+	${RM} $(OBJ) $(BIN)
+
+$(BIN): $(OBJ)
+	$(CC) $(LINKOBJ) -o $(BIN) $(LIBS)
+
+hr_timer.o: hr_timer.c
+	$(CC) -c hr_timer.c -o hr_timer.o $(CFLAGS)
+
+ya-sort.o: ya-sort.c
+	$(CC) -c ya-sort.c -o ya-sort.o $(CFLAGS)
+
+ya-median.o: ya-median.c
+	$(CC) -c ya-median.c -o ya-median.o $(CFLAGS)
+
+ya-select.o: ya-select.c
+	$(CC) -c ya-select.c -o ya-select.o $(CFLAGS)
+
+ya-sort2.o: ya-sort2.c
+	$(CC) -c ya-sort2.c -o ya-sort2.o $(CFLAGS)
+
+heapsort.o: heapsort.c
+	$(CC) -c heapsort.c -o heapsort.o $(CFLAGS)
+
+qsort.o: qsort.c
+	$(CC) -c qsort.c -o qsort.o $(CFLAGS)
