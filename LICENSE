@@ -1,3 +1,5 @@
+Note that 2 files in this reposotory are licensed under the BSD license (qsort.c and heapsort.c). 
+All the other files are under the MIT license below:
 MIT License
 
 Copyright (c) 2022 p-j-miller
