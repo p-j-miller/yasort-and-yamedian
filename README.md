@@ -4,9 +4,9 @@ C functions to sort and find medians of arrays
 This directory contains a collection of C functions for sorting and finding medians. 
 An extensive set of test programs is also present to verify their correct operation.
 
-These functions were created as the default functions supplied in the libraries of some compilers can take time of O(n\*n) to complete a sort or find a median (with particular patterns of data) which can be extremely slow compared to the expected O(n\*log(n)) for sorting or O(n) for selection/median functions. For example with n = 1,000,000 , O(n\*n) is ~ 70,000 times slower than O(n\*log(n)) - i.e. what should take 1 second could take 20 hours!
+These functions were created as the default functions supplied in the libraries of some compilers can take time of O(n\*n) to complete a sort or find a median (with particular patterns of data) which can be extremely slow compared to the expected O(n\*log(n)) for sorting or O(n) for selection/median functions. For example with n = 1,000,000 , O(n\*n) is ~ 70,000 times slower than O(n\*log(n)) - i.e. what should take 1 second could take 20 hours! The functions in this library have guaranteed worse case run times of O(n\*log(n)) for sorting and O(n) for median. 
 
-yasort(), yasort2() and qsort() also can use tasks to use all available processors when running under Windows which can also significantly improve the execution speed on modern hardware.
+yasort(), yasort2() and qsort() also can use tasks to use all available processors when running under Windows or Linux,BSD etc. which can also significantly improve the execution speed on modern hardware.
 
 ## Functions
 ```C
@@ -26,15 +26,33 @@ void yaselect(elem_type_median* r, size_t n, size_t length); // select or nth_el
  
  yasort2.c contains its own test program - which is built if YA2SORT_TEST_PROGRAM is defined.
  
- If you use Dev-C++ the a project file is included - this assumes TDM-GCC 10.3.0 is installed.
+ If you use Windows and Dev-C++ the a project file is included - this assumes TDM-GCC 10.3.0 is installed.
+ You can select to use either native Windows threads or pthreads under Windows, Linux, BSD, etc to use all available processors.
+ You can run without threads if required.
  
+ To use threads at the top of ya-sort.c (and also qsort.c and ya-sort2.c - you can set each one individually) :
+ ```
+ #define PAR_SORT
+ ```
+ and then to use pthreads also define
+ ```
+ #define USE_PTHREADS
+ ```
+ 
+ To compile the test program from the command line on Linux etc:
+ ```
+ gcc -O3 *.c -lpthread
+ ./a.out
+ ```
  ## Examples of use
  The test programs in yasort.c and yasort2.c show how to use all these functions.
  
- csvgraph uses yasort2() and ya_median(), while nsort uses qsort().
+ csvgraph ( https://github.com/p-j-miller/csvgraph ) uses yasort2() and ya_median(), while nsort ( https://github.com/p-j-miller/nsort ) uses qsort().
  
  The qsort() function conforms to ISO/IEC 9899:1990	("ISO C90"), and heapsort() is from the BSD Standard C Library.
  
- If you want to sort numbers (int, float, double etc) then yasort() is the fastest way to do this.
+ If you want to sort numbers (int, float, double etc) then yasort() (using parallel tasks) is the fastest way to do this.
+ Enabling threads gives an average 1.4\* speedup and a 1.6\* speedup of the slowest sort in the test program with a two core processor, while on an 8 core processor the speedups were 3.3\* and 3.8\* respectively.
  
+ If you just want to replace the qsort() function in your standard library then use the qsort here and benefit from better performance guarantees and the ability to transparently use all the available processors to speed up sorting. nsort (https://github.com/p-j-miller/nsort ) shows how to do this (no changes to existing code are needed, the qsort here is a drop in replacement). 
  
