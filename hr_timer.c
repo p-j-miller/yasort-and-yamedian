@@ -29,7 +29,7 @@ SOFTWARE.
 */
 #include "hr_timer.h"
 
-
+#ifdef _WIN32 /* Windows version of files */
 static LARGE_INTEGER time_of_last_reset;
 void init_HR_Timer( void) 
 { // initialise the high resolution timer
@@ -91,6 +91,45 @@ time_us read_HR_Timer_us( void)
  return (int64_t)(mult_to_usecs*(double)deltaTime.QuadPart);// scale to usecs, note this looses some resolution, cast via LARGE_INTEGER ensures result truncated
 }
 
+#else /* generic version - uses functions from the std C library. These will NOT have uS resolution ! */
+#include <time.h>
+#if 1 /* based on ideas at https://stackoverflow.com/questions/6749621/how-to-create-a-high-resolution-timer-in-linux-to-measure-program-performance */
+/* this version should work on most recent versions of Linux, macOS and BSDs and give very high resolution (ns?) */
+static struct timespec time_of_last_reset;
+void init_HR_Timer( void)  // initialise the high resolution timer
+{
+ clock_gettime(CLOCK_REALTIME, &time_of_last_reset);
+}
+double read_HR_Timer( void)   // read the timer , returns the time (secs) between last reset and now to ~ uS resolution
+{   struct timespec temp,end;
+	clock_gettime(CLOCK_REALTIME, &end);
+    if ((end.tv_nsec-time_of_last_reset.tv_nsec)<0) {
+        temp.tv_sec = end.tv_sec-time_of_last_reset.tv_sec-1;
+        temp.tv_nsec = 1000000000+end.tv_nsec-time_of_last_reset.tv_nsec;
+    } else {
+        temp.tv_sec = end.tv_sec-time_of_last_reset.tv_sec;
+        temp.tv_nsec = end.tv_nsec-time_of_last_reset.tv_nsec;
+    }
+	return (double)temp.tv_sec+1e-9*(double)temp.tv_nsec;
+}
+#else /* the following gives sub ms resolution, but seems to give total processor time [ ie sum times over all used cores ] */
+static clock_t time_of_last_reset;
+void init_HR_Timer( void)  // initialise the high resolution timer
+{time_of_last_reset=clock();
+}
+double read_HR_Timer( void)   // read the timer , returns the time (secs) between last reset and now to ~ uS resolution
+{ return (double)(clock()-time_of_last_reset)/(double)CLOCKS_PER_SEC;
+}
+#endif
+time_us read_HR_Timer_ms( void)  // read the timer, result in ms as an integer
+{ return 1e3*read_HR_Timer();
+}
+time_us read_HR_Timer_us( void)  // read the timer, result in us as an integer, overflows in ~ 1.2 hours
+{ return 1e6*read_HR_Timer();
+}
+#endif
+
+/* generic functions */
 int32_t  diff_time(time_us a, time_us b) // returns a-b valid if a, b within 2^31 of each other
 	// warning overflow of signed integers is not defined by C standard, but overflow of unsigned is.
 	// however this function must return a signed type (here int32_t rather than time_us which may be unsigned).

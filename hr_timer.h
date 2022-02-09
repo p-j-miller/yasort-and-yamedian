@@ -8,7 +8,9 @@
 */
 #ifndef __HR_TIMER
 #define __HR_TIMER
-#include <windows.h>
+#ifdef _WIN32
+ #include <windows.h>
+#endif 
 #include <stdint.h>
 typedef uint32_t time_us ; // all time calcs should use this type, note overflows in ~ 36 mins with in32 and 1 hr 12 mins with uint32, so code should allow for this
 					/* warning if this is a signed type then the behaviour is not guaranteed by the C standard

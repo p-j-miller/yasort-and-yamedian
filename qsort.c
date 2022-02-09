@@ -22,6 +22,7 @@
 
 /* the parameters below allow the sort to be "tuned" - the default values should give good results using most modern PC's */ 
 #define PAR_SORT /* if defined use tasks to split sort across multiple processors - only works for Windows at present */
+#define USE_PTHREADS /* if defined use pthreads for multitasking - otherwise if running under windows use native windows threads. Pthreads is slightly slower than native Windows threads on Windows */
 #define USE_INSERTION_SORT 25 /* for n<USE_INSERTION_SORT we use an insertion sort rather than quicksort , as this is faster */
 #define MAX_INS_MOVES 2 /* max allowed number of allowed out of place items while sticking to insertion sort - for the test program, sorting doubles, 2 is the optimum value */	 
 #define USE_MED_3_3 40 /* if > USE_MED_3_3 elements use median of 3 medians of 3, otherwise use median of 3 equally spaced elements */	
@@ -64,8 +65,23 @@
 #include <stdlib.h>
 #include <string.h>
 #ifdef PAR_SORT
- #include <process.h> /* for _beginthreadex */
- #include <windows.h> /* for number of processors */
+ #if defined _WIN32 
+  #include <process.h> /* for _beginthreadex */
+  #include <windows.h> /* for number of processors */
+ #elif defined __GNUC__
+  #include <unistd.h> /* to get number of processors on OS's other than Windows */
+ #else
+  #error "Parallel sorting not supported for this complier/OS (undefine PAR_SORT to avoid this error)"
+ #endif 
+ #ifdef USE_PTHREADS
+  #include <pthread.h>
+ #endif
+#endif
+
+#ifdef DEBUG
+ #define dprintf(...) printf(__VA_ARGS__) /* convert to printf when DEBUG defined */ 
+#else
+ #define dprintf(...) /* nothing - only prints when DEBUG defined */
 #endif
 
 typedef int		 cmp_t(const void *, const void *);
@@ -78,9 +94,15 @@ int heapsort(void *vbase, size_t nmemb, size_t size,cmp_t *cmp);/* in bsd-heapso
 #define P_UNUSED(x) (void)x /* a way to avoid warning unused parameter messages from the compiler */
 
 #if defined __GNUC__
-
 static inline int ilog2(size_t x) { return 63 - __builtin_clzll(x); }
-
+#elif defined _WIN64  && !defined  __BORLANDC__ /* must come before _WIN32 test as for 64 bit mode BOTH _WIN32 and _WIN64 are defined */
+#include <intrin.h>
+static inline int ilog2(size_t x)
+{
+    unsigned long i = 0;
+    _BitScanReverse64(&i, x);
+    return i;
+}
 #elif defined _WIN32  && !defined  __BORLANDC__
 #include <intrin.h>
 static inline int ilog2(size_t x)
@@ -90,14 +112,6 @@ static inline int ilog2(size_t x)
     return i;
 }
 
-#elif defined _WIN64  && !defined  __BORLANDC__
-#include <intrin.h>
-static inline int ilog2(size_t x)
-{
-    unsigned long i = 0;
-    _BitScanReverse64(&i, x);
-    return i;
-}
 #else // version in standard C , this is slower than above optimised versions but portable
 /* algorithm from https://stackoverflow.com/questions/11376288/fast-computing-of-log2-for-64-bit-integers */
 #if (defined __BORLANDC__ && defined _WIN64) || ( defined __SIZEOF_POINTER__ &&  __SIZEOF_POINTER__ == 8)
@@ -137,32 +151,52 @@ static inline int  ilog2(size_t x) // unsigned 32 bit version
 
 #define PAR_DIV_N 16 /* divisor on n (current partition size) to check size of partition about to be spawned as a new task is big enough to justify the work of creating a new task */
 #define PAR_MIN_N 10000 /* min size of a partition to be spawned as a new task */
-/* static void local_qsort(void *a, size_t n, size_t es, cmp_t *cmp, int nos_p); */
+#define USE_VOL_TASK_FIN /* if defined use a volatile variable in struct _params to indictae a task has finished */
 struct _params 
 	{void *a_p;
 	 size_t n_p;
 	 size_t es_p;
 	 cmp_t *cmp_p;
 	 int nos_p_p;
+	 volatile int task_fin; /* 0 => task running, 1=> task finished. Volatile as set by seperate task.  This variable makes porting to pthreads simpler*/
 	};
-	
-static unsigned __stdcall yasortThreadFunc( void * _Arg ) /* parallel thread that can sort a partition */
-{struct _params* Arg=_Arg;
- local_qsort(Arg->a_p,Arg->n_p,Arg->es_p,Arg->cmp_p,Arg->nos_p_p); /* sort required section  */
- _endthreadex( 0 );
- return 0;
-}
 
+#ifdef USE_PTHREADS // void *(*start_routine)(void *)
+ static void *  yasortThreadFunc( void * _Arg ) // parallel thread that can sort a partition
+#else	
+ static unsigned __stdcall yasortThreadFunc( void * _Arg ) // parallel thread that can sort a partition
+#endif
+	{struct _params* Arg=_Arg;
+	 Arg->task_fin=0; // This should be set before starting the thread, waiting till now leaves a short time when the thread may appear to have finished but its actually not started... Its done here "just in case".
+	 local_qsort(Arg->a_p,Arg->n_p,Arg->es_p,Arg->cmp_p,Arg->nos_p_p); /* sort required section  */
+	 Arg->task_fin=1; // indicate task now finished - note it will actually finish when this function returns so this flag just indicates another task can now "wait" on this tesk finishing
+	 // _endthreadex( 0 ); - _endthreadex is call automatically when we return from this function - see https://docs.microsoft.com/en-us/cpp/c-runtime-library/reference/endthread-endthreadex?view=msvc-170 
+	 return 0;
+	}
+
+#ifndef _WIN32
+/* this code is for non-Windows systems , beleived to work under Linux, BSD unix and MAC OS */
+static int nos_procs(void) /* return the number of logical processors present and enabled */
+{ return sysconf(_SC_NPROCESSORS_ONLN);
+}
+ #ifdef YASORT_MEDIAN_TEST_PROGRAM /* only needed for the test program */
+ static void proc_info(void)
+  {
+	printf("  %d processors available\n",nos_procs());
+	printf("  system - number of cpus  is %d\n", sysconf( _SC_NPROCESSORS_CONF));
+    printf("  system - enable number of cpus is %d\n", sysconf(_SC_NPROCESSORS_ONLN));
+  }
+ #endif
+#else
 /* we ideally need to know the number of processors - the code below gets this for windows */
 /* this is from https://docs.microsoft.com/de-de/windows/win32/api/sysinfoapi/nf-sysinfoapi-getlogicalprocessorinformation with minor changes by Peter Miller */
-/* see https://programmerall.com/article/52652219244/ for Linux versions */
 
 typedef BOOL (WINAPI *LPFN_GLPI)(
     PSYSTEM_LOGICAL_PROCESSOR_INFORMATION, 
     PDWORD);
 
 
-/* Helper function to count set bits in the processor mask. */
+// Helper function to count set bits in the processor mask.
 static DWORD CountSetBits(ULONG_PTR bitMask)
 {
     DWORD LSHIFT = sizeof(ULONG_PTR)*8 - 1;
@@ -181,7 +215,7 @@ static DWORD CountSetBits(ULONG_PTR bitMask)
 
 
 static int nos_procs(void) /* return the number of logical processors present. 
-					   This was created by Peter Miller 15/1/2022 based on above code  */
+					   This was created by Peter Miller 15/1/2022  */
 {
     BOOL done = FALSE;
     PSYSTEM_LOGICAL_PROCESSOR_INFORMATION buffer = NULL;
@@ -207,12 +241,12 @@ static int nos_procs(void) /* return the number of logical processors present.
 
                 if (NULL == buffer) 
                 {
-                    /* Error: memoery Allocation failure */
+                    // Error: memoery Allocation failure
                     return 0;
                 }
             } 
             else 
-            {  /* other (unexpected) error */
+            {  // other (unexpected) error
                 return 0;
             }
         } 
@@ -229,7 +263,7 @@ static int nos_procs(void) /* return the number of logical processors present.
         if (ptr->Relationship == RelationProcessorCore) 
         {
             processorCoreCount++;
-            /* A hyperthreaded core supplies more than one logical processor.*/
+            // A hyperthreaded core supplies more than one logical processor.
             logicalProcessorCount += CountSetBits(ptr->ProcessorMask);
         }
         byteOffset += sizeof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION);
@@ -238,9 +272,9 @@ static int nos_procs(void) /* return the number of logical processors present.
 
     free(buffer);
 
-    return (int)logicalProcessorCount; /* actual number of processor cores is processorCoreCount */
+    return (int)logicalProcessorCount; // actual number of processor cores is processorCoreCount
 }
-
+#endif
 #endif
 
 /*
@@ -306,7 +340,12 @@ static void local_qsort(void *a, size_t n, size_t es, cmp_t *cmp, int nos_p)
  const int max_itn=INTROSORT_MULT*ilog2(n); // max_itn defines point we swap to mid-range pivot, then at 2*max_int we swap to ya_heapsort. if INTROSORT_MULT=0 then "always" use ya_heapsort, 3 means "almost never" use ya_heapsort
 #ifdef PAR_SORT
  struct _params params;
- HANDLE th=NULL; // handle for worker thread
+ #ifdef USE_PTHREADS
+ pthread_t *th=NULL;// set to &thread_id when running 
+ pthread_t thread_id;
+ #else
+ HANDLE th=NULL; // handle for worker thread (Windows threads)
+ #endif
 #else
  P_UNUSED(nos_p); // this param is not used unless PAR_SORT is defined
 #endif	 
@@ -340,10 +379,8 @@ static void local_qsort(void *a, size_t n, size_t es, cmp_t *cmp, int nos_p)
 	do_qsort: ; /* comes here if not already sorted */	
    // if we have made too many iterations of this while loop then we need to swap to ya_heapsort 
    if(++itn>max_itn)
-  		{	 
-#ifdef DEBUG 	  
-	  	 printf("qsort: using heapsort(%.0f)\n",(double)n);
-#endif	 
+  		{	 	  
+	  	 dprintf("qsort: using heapsort(%.0f)\n",(double)n); 
 		/* int heapsort(void *vbase, size_t nmemb, size_t size,cmp_t *cmp); */ 
 		/* static void local_qsort(void *a, size_t n, size_t es, cmp_t *cmp, int nos_p) */
 	  	 if(heapsort(a,n,es,cmp)==0) goto sortend; // if heapsort suceeded then we are done, otherwise we need to stick with quicksort.
@@ -420,12 +457,21 @@ static void local_qsort(void *a, size_t n, size_t es, cmp_t *cmp, int nos_p)
 	  */ 	
 	  if(th!=NULL && n>2*PAR_MIN_N )
 	  	{// if thread active and partition big enough that we might be able to use a parallel task (2* as we will at least halve the size of the partition for the parallel task) 
-	  	 if( WaitForSingleObject( th, 0 )!=WAIT_TIMEOUT)
-	  		{// if thread has finished
+ #ifdef USE_PTHREADS
+ 	  	 if( params.task_fin==1 )
+	  		{// if thread has finished 
+	  		 pthread_join(thread_id,NULL);
+			 th=NULL; // set to NULL so we can reuse it
+			 dprintf("Thread finished within function processing size=%llu nos_p=%d\n",n,nos_p); 
+			}
+ #else	  	
+	  	 if( params.task_fin==1 && WaitForSingleObject( th, 0 )!=WAIT_TIMEOUT)
+	  		{// if thread has finished - using params.task_fin==1 might be more efficient than always calling WaitForSingleObject() - but anyway it makes porting to pthreads simpler
     		 CloseHandle( th );// Destroy the thread object.
 			 th=NULL; // set to NULL so we can reuse it
-			 // printf("Thread finished at depth %d\n",depth);
+			 dprintf("Thread finished within function processing size=%llu nos_p=%d\n",n,nos_p); 
 			}
+ #endif	
 		}
 #endif     	 
 	 if (d1 <= d2) 
@@ -447,7 +493,17 @@ static void local_qsort(void *a, size_t n, size_t es, cmp_t *cmp, int nos_p)
 				 params.es_p=es;
 				 params.cmp_p=cmp;
 				 params.nos_p_p=(nos_p)/2; // if we still have spare processors allow more threads to be started
-				 th=(HANDLE)_beginthreadex(NULL,0,yasortThreadFunc,&params,0,NULL);
+			 	 params.task_fin=0; // task has not yet finished
+ #ifdef USE_PTHREADS
+	 			 if(pthread_create(&thread_id,NULL,yasortThreadFunc,&params)==0)
+	 			 	{th=&thread_id; // success
+	 			 	}
+	 			 else
+	 			 	{th=NULL; // failed to run task
+	 				}
+ #else		/* use native Windows threads */	 
+			 	 th=(HANDLE)_beginthreadex(NULL,0,yasortThreadFunc,&params,0,NULL);
+ #endif					 
 				 if(th==NULL) local_qsort(a, d1 / es, es, cmp,0); // if starting thread fails then do in this process.  nos_p=0 so don't run any tasks from here
 				}
 			 else
@@ -485,7 +541,17 @@ static void local_qsort(void *a, size_t n, size_t es, cmp_t *cmp, int nos_p)
 				 params.es_p=es;
 				 params.cmp_p=cmp;
 				 params.nos_p_p=(nos_p)/2; // if we still have spare processors allow more threads to be started
-				 th=(HANDLE)_beginthreadex(NULL,0,yasortThreadFunc,&params,0,NULL);
+				 params.task_fin=0; // task has not yet finished		
+ #ifdef USE_PTHREADS
+	 			 if(pthread_create(&thread_id,NULL,yasortThreadFunc,&params)==0)
+	 			 	{th=&thread_id; // success
+	 			 	}
+	 			 else
+	 			 	{th=NULL; // failed to run task
+	 				}
+ #else		/* use native Windows threads */	 
+			 	 th=(HANDLE)_beginthreadex(NULL,0,yasortThreadFunc,&params,0,NULL);
+ #endif	
 				 if(th==NULL) local_qsort(pn - d2, d2 / es, es, cmp,0); // if starting thread fails then do in this process.  nos_p=0 so don't run any tasks from here
 				}
 			 else
@@ -507,11 +573,15 @@ static void local_qsort(void *a, size_t n, size_t es, cmp_t *cmp, int nos_p)
  sortend: ; // need a common end point as may be using threads in which case we need to wait for them to complete	
  #ifdef PAR_SORT
  if(th!=NULL)
- 	{// if a thread used need to wait for it to finish
+ 	{// if a thread used and its still running, need to wait for it to finish
+  #ifdef USE_PTHREADS
+	 pthread_join(thread_id,NULL);
+  #else	 /* using native Windows threads */ 	 
  	 WaitForSingleObject( th, INFINITE );
-    // Destroy the thread object.
+     // Destroy the thread object.
      CloseHandle( th );
-	}
+  #endif
+	}  	
  #endif
  return;   	
 }
